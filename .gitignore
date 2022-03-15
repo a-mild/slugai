@@ -1,6 +1,7 @@
+data/
+.idea
 # Byte-compiled / optimized / DLL files
 __pycache__/
-.idea
 
 .pytest_cache/
 
@@ -9,3 +10,4 @@ __pycache__/
 
 # Environments
 .env
+
