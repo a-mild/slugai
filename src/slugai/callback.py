@@ -1,8 +1,10 @@
-from typing import List
+from collections import defaultdict
+from typing import List, Dict
 
 import torch
+from tqdm import tqdm
 
-from slugai.phase import LoopPhase
+from slugai.phase import LoopPhase, Phase
 
 
 class Callback:
@@ -75,23 +77,15 @@ class CallbackAggregate(Callback):
             method(**kwargs)
 
 
-class Progress(Callback):
+class ProgressBar(Callback):
 
     def __init__(self, print_every: int = 100):
         self.print_every = print_every
-        self.validation_loss = None
-        self.correct = None
-        self.train_size = None
-        self.train_batch_size = None
-        self.test_size = None
-        self.test_batch_size = None
+        self.bars: Dict[LoopPhase, tqdm] = {}
 
-    def training_started(self, train_size: int, test_size: int,
-                         train_batch_size: int, test_num_batches: int):
-        self.train_size = train_size
-        self.test_size = test_size
-        self.train_batch_size = train_batch_size
-        self.test_num_batches = test_num_batches
+    def training_started(self, phases: List[Phase]):
+        for phase in phases:
+            self.bars[phase.type_] = tqdm(total=len(phase.dataloader), desc=str(phase.type_))
 
     def training_ended(self, **kwargs):
         print("Done")
@@ -99,22 +93,28 @@ class Progress(Callback):
     def epoch_started(self, epoch: int):
         print(f"Epoch {epoch} -------------------------")
 
-    def phase_started(self, phase: LoopPhase):
-        if phase == LoopPhase.VALIDATION:
-            self.validation_loss, self.correct = 0, 0
+    def epoch_ended(self, **kwargs):
+        for bar in self.bars.values():
+            bar.n = 0
+            bar.refresh()
 
-    def phase_ended(self, phase: LoopPhase):
-        if phase == LoopPhase.VALIDATION:
-            validation_loss = self.validation_loss / self.test_num_batches
-            correct = self.correct / self.test_size
-            print(f"Validation error: \n Accuracy: {(100 * correct):>0.2f}%, Avg loss: {validation_loss:>8f} \n")
+    def batch_ended(self, phase: Phase, pred, target, **kwargs):
+        bar: tqdm = self.bars[phase.type_]
+        bar.update(pred.size(0))
 
-    def batch_ended(self, phase: LoopPhase, loss: float, pred: torch.Tensor, target):
-        if phase == LoopPhase.VALIDATION:
-            self.validation_loss += loss
-            self.correct += (pred.argmax(1) == target).type(torch.float).sum().item()
 
-    def after_backward_pass(self, loss: float, batch: int):
-        if batch % self.print_every == 0:
-            current = self.train_batch_size * batch
-            print(f"loss: {loss:>7f} [{current:>5d}/{self.train_size:>5d}]")
+class Accuracy(Callback):
+
+    def epoch_started(self, **kwargs):
+        """Reset counts"""
+        self.n_samples = defaultdict(int)
+        self.correct = defaultdict(int)
+
+    def batch_ended(self, phase: Phase, pred: torch.Tensor, target):
+        self.n_samples[phase.type_] += pred.size(0)
+        self.correct[phase.type_] += (pred.argmax(1) == target).type(torch.float).sum().item()
+
+    def epoch_ended(self, phases: List[Phase]):
+        for phase in phases:
+            accuracy = self.correct[phase.type_] / self.n_samples[phase.type_]
+            print(f"Validation error: \n Accuracy: {100*accuracy:>0.2f}% \n")
