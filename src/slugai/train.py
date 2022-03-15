@@ -2,14 +2,9 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
+from slugai.phase import Phase
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
-
-
-class Phase:
-
-    def __init__(self, dataloader: DataLoader, is_train: bool = True) -> None:
-        self.dataloader = dataloader
-        self.is_train = is_train
 
 
 def run_one_epoch(train_phase: Phase, test_phase: Phase, model, loss_fn, optimizer) -> None:
