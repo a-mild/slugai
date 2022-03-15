@@ -1,4 +1,11 @@
+from enum import Enum, auto
+
 from torch.utils.data import DataLoader
+
+
+class LoopPhase(Enum):
+    TRAIN = auto()
+    VALIDATION = auto()
 
 
 class Phase:

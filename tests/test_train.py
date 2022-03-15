@@ -1,8 +1,12 @@
 import torch.optim
 
-from slugai.train import run_epochs
+from slugai.callback import Progress
+from slugai.train import Trainer
 
 
-def test_run_epochs(mnist_train_dl, mnist_test_dl, model, cross_entropy_loss):
+def test_trainer(mnist_train_dl, mnist_test_dl, model, cross_entropy_loss):
     optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
-    run_epochs(5, mnist_train_dl, mnist_test_dl, model, cross_entropy_loss, optimizer)
+    callbacks = [Progress()]
+    trainer = Trainer(mnist_train_dl, mnist_test_dl, model, cross_entropy_loss, optimizer,
+                      callbacks)
+    trainer.fit(n_epochs=5)

@@ -1,51 +1,70 @@
+from enum import Enum, auto
+from typing import List
+
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
-from slugai.phase import Phase
+from slugai.callback import Callback, CallbackAggregate
+from slugai.phase import Phase, LoopPhase
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def run_one_epoch(train_phase: Phase, test_phase: Phase, model, loss_fn, optimizer) -> None:
-    for phase in [train_phase, test_phase]:
-        size = len(phase.dataloader.dataset)
-        if phase.is_train:
-            model.train()
-        else:
-            test_loss, correct = 0, 0
-            model.eval()
+class Trainer:
 
-        for batch, (X, y) in enumerate(phase.dataloader):
-            X, y = X.to(device), y.to(device)
+    def __init__(self, train_dl: DataLoader, test_dl: DataLoader,
+                 model: nn.Module, loss_fn, optimizer,
+                 callbacks: List[Callback]) -> None:
+        self.train_dl = train_dl
+        self.test_dl = test_dl
+        self.model = model
+        self.loss_fn = loss_fn
+        self.optimizer = optimizer
+        self.cb = CallbackAggregate(callbacks)
+        self.phases = {
+            LoopPhase.TRAIN: Phase(train_dl, is_train=True),
+            LoopPhase.VALIDATION: Phase(test_dl, is_train=False),
+        }
 
-            with torch.set_grad_enabled(phase.is_train):
-                pred = model(X)
-                loss = loss_fn(pred, y)
+    def fit(self, n_epochs: int) -> None:
+        self.model.to(device)
+        self.cb.training_started(
+            train_size=len(self.train_dl.dataset),
+            test_size=len(self.test_dl.dataset),
+            train_batch_size=self.train_dl.batch_size,
+            test_num_batches=len(self.test_dl),
+        )
+        for i in range(1, n_epochs + 1):
+            self.cb.epoch_started(epoch=i)
+            self._fit_one_cycle()
+            self.cb.epoch_ended()
+        self.cb.training_ended()
 
-            if phase.is_train:
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                if batch % 100 == 0:
-                    loss, current = loss.item(), batch * len(X)
-                    print(f"loss: {loss:>7f} [{current:>5d}/{size:>5d}]")
-            else:
-                test_loss += loss_fn(pred, y).item()
-                correct += (pred.argmax(1) == y).type(torch.float).sum().item()
+    def fit_one_cycle(self):
+        self.fit(n_epochs=1)
 
-        if not phase.is_train:
-            num_batches = len(phase.dataloader)
-            test_loss = test_loss / num_batches
-            correct = correct / size
-            print(f"Test error: \n Accuracy: {(100 * correct):>0.2f}%, Avg loss: {test_loss:>8f} \n")
+    def _fit_one_cycle(self):
+        model, loss_fn, optimizer = self.model, self.loss_fn, self.optimizer
 
+        for name, phase in self.phases.items():
+            self.cb.phase_started(phase=name)
+            model.train(phase.is_train)  # sets model.eval() if phase.is_train == False
 
-def run_epochs(n_epochs: int,
-               train_dl: DataLoader, test_dl: DataLoader,
-               model: nn.Module, loss_fn, optimizer) -> None:
-    train_phase = Phase(train_dl, is_train=True)
-    test_phase = Phase(test_dl, is_train=False)
-    for i in range(n_epochs):
-        run_one_epoch(train_phase, test_phase, model, loss_fn, optimizer)
-    print("Done")
+            for batch, (X, y) in enumerate(phase.dataloader):
+                self.cb.batch_started()
+                X, y = X.to(device), y.to(device)
+
+                with torch.set_grad_enabled(phase.is_train):
+                    pred = model(X)
+                    loss = loss_fn(pred, y)
+
+                if phase.is_train:
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    self.cb.after_backward_pass(loss=loss.item(), batch=batch)
+
+                self.cb.batch_ended(phase=name, loss=loss.item(), pred=pred, target=y)
+
+            self.cb.phase_ended(phase=name)
