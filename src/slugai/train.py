@@ -22,23 +22,18 @@ class Trainer:
         self.loss_fn = loss_fn
         self.optimizer = optimizer
         self.cb = CallbackAggregate(callbacks)
-        self.phases = {
-            LoopPhase.TRAIN: Phase(train_dl, is_train=True),
-            LoopPhase.VALIDATION: Phase(test_dl, is_train=False),
-        }
+        self.phases = [
+            Phase(LoopPhase.TRAIN, train_dl, is_train=True),
+            Phase(LoopPhase.VALIDATION, test_dl, is_train=False),
+        ]
 
     def fit(self, n_epochs: int) -> None:
         self.model.to(device)
-        self.cb.training_started(
-            train_size=len(self.train_dl.dataset),
-            test_size=len(self.test_dl.dataset),
-            train_batch_size=self.train_dl.batch_size,
-            test_num_batches=len(self.test_dl),
-        )
+        self.cb.training_started(phases=self.phases)
         for i in range(1, n_epochs + 1):
             self.cb.epoch_started(epoch=i)
             self._fit_one_cycle()
-            self.cb.epoch_ended()
+            self.cb.epoch_ended(phases=self.phases)
         self.cb.training_ended()
 
     def fit_one_cycle(self):
@@ -47,8 +42,8 @@ class Trainer:
     def _fit_one_cycle(self):
         model, loss_fn, optimizer = self.model, self.loss_fn, self.optimizer
 
-        for name, phase in self.phases.items():
-            self.cb.phase_started(phase=name)
+        for phase in self.phases:
+            self.cb.phase_started(phase=phase.type_)
             model.train(phase.is_train)  # sets model.eval() if phase.is_train == False
 
             for batch, (X, y) in enumerate(phase.dataloader):
@@ -65,6 +60,6 @@ class Trainer:
                     optimizer.step()
                     self.cb.after_backward_pass(loss=loss.item(), batch=batch)
 
-                self.cb.batch_ended(phase=name, loss=loss.item(), pred=pred, target=y)
+                self.cb.batch_ended(phase=phase, pred=pred, target=y)
 
-            self.cb.phase_ended(phase=name)
+            self.cb.phase_ended(phase=phase.type_)
